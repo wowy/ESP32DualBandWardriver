@@ -12,6 +12,16 @@ uint32_t calculateNodeStaggerOffsetMs(uint8_t node_index,
   return ((uint32_t)node_index * window_ms) / node_count;
 }
 
+int8_t resolveTxPowerDbm(int8_t stored, bool is_solo) {
+  // A value the radio cannot produce cannot be a deliberate choice, so treat
+  // it as unconfigured rather than clamping it into something the user never
+  // asked for.
+  if ((stored < MIN_TX_POWER_DBM) || (stored > MAX_TX_POWER_DBM))
+    return is_solo ? WEB_TX_POWER_DBM : DEFAULT_TX_POWER_DBM;
+
+  return stored;
+}
+
 int8_t txPowerDbmToQuarterDbm(int8_t dbm) {
   // {actual dBm, value passed to esp_wifi_set_max_tx_power}. The radio only
   // implements these rungs; anything in between is rounded down by the SDK.

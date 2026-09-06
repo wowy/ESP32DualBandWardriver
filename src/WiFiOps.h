@@ -223,6 +223,9 @@ class WiFiOps
     // Starts at full so the boot admin phase is never crippled.
     // --------------------------------------------------------
     int8_t tx_power_dbm = WEB_TX_POWER_DBM;
+    // Raw stored setting, kept separate so the web UI can show "Auto" rather
+    // than whatever the role happened to resolve it to.
+    int8_t tx_power_setting = TX_POWER_AUTO;
     void setTxPower(int8_t dbm);
     void loadTxPowerSetting();
 

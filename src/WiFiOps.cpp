@@ -1969,16 +1969,16 @@ void WiFiOps::setTxPower(int8_t dbm) {
 void WiFiOps::loadTxPowerSetting() {
   int stored = settings.loadSetting<int>(TX_POWER_NAME);
 
-  // Settings files written before this key existed auto-create it with a
-  // value of 1, which is below the radio floor. Treat anything out of range
-  // as unconfigured and fall back to the default.
-  if ((stored < MIN_TX_POWER_DBM) || (stored > MAX_TX_POWER_DBM))
-    stored = DEFAULT_TX_POWER_DBM;
+  if ((stored < INT8_MIN) || (stored > INT8_MAX))
+    stored = TX_POWER_AUTO;
 
-  this->tx_power_dbm = (int8_t)stored;
+  this->tx_power_setting = (int8_t)stored;
+  this->tx_power_dbm = resolveTxPowerDbm(this->tx_power_setting,
+                                         this->run_mode == SOLO_MODE);
 
   Logger::log(STD_MSG, "Wardrive TX power: " +
-              (String)(int)this->tx_power_dbm + " dBm");
+              (String)(int)this->tx_power_dbm + " dBm" +
+              (this->tx_power_setting == TX_POWER_AUTO ? " (role default)" : ""));
 }
 
 void WiFiOps::deinitWiFi() {
@@ -2665,16 +2665,22 @@ void WiFiOps::serveConfigPage() {
     html += "<h3>TX Power</h3>";
     html += "<small>Maximum transmit power while wardriving. Lower values cut the ";
     html += "desense between nodes sitting close together, at the cost of scan range ";
-    html += "and mesh range. Web UI, dock mode and uploads always run at full power. ";
-    html += "The radio only implements the steps listed here.</small><br><br>";
+    html += "and mesh range. Auto turns Node and Core down but leaves Solo at full ";
+    html += "power, since a solo device has no neighbours to interfere with. Web UI, ";
+    html += "dock mode and uploads always run at full power. The radio only ";
+    html += "implements the steps listed here.</small><br><br>";
     html += "Max TX Power: <select name=\"tx_dbm\">";
+    const bool tx_is_solo = (this->run_mode == SOLO_MODE);
+    html += "<option value=\"" + String((int)TX_POWER_AUTO) + "\"";
+    if (this->tx_power_setting == TX_POWER_AUTO) html += " selected";
+    html += ">Auto &mdash; " +
+            String((int)resolveTxPowerDbm(TX_POWER_AUTO, tx_is_solo)) +
+            " dBm for this role</option>";
     static const int8_t tx_power_rungs[] = {2, 5, 7, 8, 11, 13, 14, 15, 16, 18, 20};
     for (uint8_t i = 0; i < sizeof(tx_power_rungs) / sizeof(tx_power_rungs[0]); i++) {
       html += "<option value=\"" + String((int)tx_power_rungs[i]) + "\"";
-      if (this->tx_power_dbm == tx_power_rungs[i]) html += " selected";
-      html += ">" + String((int)tx_power_rungs[i]) + " dBm";
-      if (tx_power_rungs[i] == DEFAULT_TX_POWER_DBM) html += " (default)";
-      html += "</option>";
+      if (this->tx_power_setting == tx_power_rungs[i]) html += " selected";
+      html += ">" + String((int)tx_power_rungs[i]) + " dBm</option>";
     }
     html += "</select><br><br>";
 
@@ -2902,12 +2908,19 @@ void WiFiOps::serveConfigPage() {
     // back to wardriving.
     if (server.hasArg("tx_dbm") && server.arg("tx_dbm") != "") {
       int requested = server.arg("tx_dbm").toInt();
-      if (requested < MIN_TX_POWER_DBM) requested = MIN_TX_POWER_DBM;
-      if (requested > MAX_TX_POWER_DBM) requested = MAX_TX_POWER_DBM;
-      this->tx_power_dbm = (int8_t)requested;
-      settings.saveSetting<bool>(TX_POWER_NAME, (int)this->tx_power_dbm, true);
+      if (requested != TX_POWER_AUTO) {
+        if (requested < MIN_TX_POWER_DBM) requested = MIN_TX_POWER_DBM;
+        if (requested > MAX_TX_POWER_DBM) requested = MAX_TX_POWER_DBM;
+      }
+      this->tx_power_setting = (int8_t)requested;
+      settings.saveSetting<bool>(TX_POWER_NAME, (int)this->tx_power_setting, true);
       anyChange = true;
     }
+
+    // Device mode is saved above, so re-resolve here to catch a role change
+    // as well as a power change.
+    this->tx_power_dbm = resolveTxPowerDbm(this->tx_power_setting,
+                                           this->run_mode == SOLO_MODE);
 
     if (anyChange)
       Logger::log(GUD_MSG, "Settings saved successfully");

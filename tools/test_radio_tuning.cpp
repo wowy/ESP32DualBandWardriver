@@ -57,5 +57,24 @@ int main() {
   assert(txPowerDbmToQuarterDbm(21) == 80);
   assert(txPowerDbmToQuarterDbm(127) == 80);
 
+  // --- Role-aware default resolution --------------------------------------
+  // Unconfigured means "pick for my role". A solo device has no neighbours to
+  // desense, so it keeps full range; meshed roles turn down.
+  assert(resolveTxPowerDbm(TX_POWER_AUTO, true)  == WEB_TX_POWER_DBM);
+  assert(resolveTxPowerDbm(TX_POWER_AUTO, false) == DEFAULT_TX_POWER_DBM);
+
+  // An explicit choice always wins, including a solo device deliberately
+  // turning itself down, or a node deliberately running at full power.
+  assert(resolveTxPowerDbm(2, true)   == 2);
+  assert(resolveTxPowerDbm(20, false) == 20);
+  assert(resolveTxPowerDbm(11, true)  == 11);
+
+  // Values a settings file could not have meant are treated as unconfigured.
+  // Older builds auto-create the key with 1, which is below the radio floor.
+  assert(resolveTxPowerDbm(1, false)  == DEFAULT_TX_POWER_DBM);
+  assert(resolveTxPowerDbm(1, true)   == WEB_TX_POWER_DBM);
+  assert(resolveTxPowerDbm(99, true)  == WEB_TX_POWER_DBM);
+  assert(resolveTxPowerDbm(-5, false) == DEFAULT_TX_POWER_DBM);
+
   return 0;
 }

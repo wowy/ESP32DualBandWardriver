@@ -56,6 +56,7 @@
 // Nodes parked close together desense each other while scanning, so the
 // wardriving power is turned down and only raised for AP work.
 #define TX_POWER_NAME        "tx_dbm" // Wardriving max TX power in dBm (Int)
+#define TX_POWER_AUTO        0        // Stored value meaning "default for my role"
 #define DEFAULT_TX_POWER_DBM 2        // Bottom rung the radio implements
 #define WEB_TX_POWER_DBM     20       // Full power for web UI, dock and uploads
 #define MIN_TX_POWER_DBM     2
