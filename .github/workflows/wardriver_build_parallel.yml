@@ -22,6 +22,12 @@ jobs:
             -Isrc src/ChannelDwell.cpp tools/test_channel_dwell.cpp \
             -o /tmp/test_channel_dwell
           /tmp/test_channel_dwell
+      - name: Build and run native radio tuning tests
+        run: |
+          g++ -std=c++17 -Wall -Wextra -Wpedantic \
+            -Isrc src/RadioTuning.cpp tools/test_radio_tuning.cpp \
+            -o /tmp/test_radio_tuning
+          /tmp/test_radio_tuning
 
   compile_sketch:
     name: build ${{ matrix.board.name }}

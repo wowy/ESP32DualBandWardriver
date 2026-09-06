@@ -584,6 +584,17 @@ void WiFiOps::debugPrintNodeTable() {
 }
 
 void WiFiOps::setFixedChannel(uint8_t ch) {
+  // Every discovered network triggers a send, and each send calls in here.
+  // Inside a burst we are already parked on the ESP-NOW channel, so bail out
+  // rather than re-running the promiscuous toggle and the serial print for
+  // each record - that airtime belongs to actual traffic.
+  uint8_t parked_primary = 0;
+  wifi_second_chan_t parked_second = WIFI_SECOND_CHAN_NONE;
+  if ((esp_wifi_get_channel(&parked_primary, &parked_second) == ESP_OK) &&
+      (parked_primary == ch)) {
+    return;
+  }
+
   // Disable power save (prevents weird timing/channel behavior)
   esp_wifi_set_ps(WIFI_PS_NONE);
 
@@ -704,6 +715,17 @@ void WiFiOps::sendCoreReply(const uint8_t* destMac) {
 void WiFiOps::runAdminWindowAfterScanCycle() {
   this->setFixedChannel(ESPNOW_CHANNEL);
   delay(5);
+
+  // Sweeps free-run, so nodes drift in and out of alignment and eventually
+  // key up together. Core already tells us our index and the node count, so
+  // spend that to claim a distinct slot before transmitting. Losing a
+  // heartbeat costs an assignment cycle once the 60s timeout expires.
+  const uint32_t stagger_ms = calculateNodeStaggerOffsetMs(assigned_node_index,
+                                                           assigned_node_count,
+                                                           NODE_STAGGER_WINDOW_MS);
+  if (stagger_ms > 0)
+    delay(stagger_ms);
+
   this->sendHeartbeat();
 
   // Wait for ADMIN response
@@ -1915,6 +1937,48 @@ void WiFiOps::initWiFi(bool set_country) {
   WiFi.STA.begin();
   WiFi.setBandMode(WIFI_BAND_MODE_AUTO);
   delay(100);
+
+  // The radio comes back at the PHY default every time it is restarted, so
+  // the baseline has to be re-asserted here rather than set once at boot.
+  // AP paths raise the applied power again immediately after calling us.
+  this->setTxPower(this->tx_power_dbm);
+}
+
+// Apply a TX power now without disturbing the baseline that initWiFi()
+// restores. Callers wanting a persistent change assign tx_power_dbm.
+void WiFiOps::setTxPower(int8_t dbm) {
+  if (dbm < MIN_TX_POWER_DBM) dbm = MIN_TX_POWER_DBM;
+  if (dbm > MAX_TX_POWER_DBM) dbm = MAX_TX_POWER_DBM;
+
+  const int8_t quarter_dbm = txPowerDbmToQuarterDbm(dbm);
+
+  esp_err_t res = esp_wifi_set_max_tx_power(quarter_dbm);
+  if (res != ESP_OK)
+    Logger::log(WARN_MSG, "Failed to set WiFi TX power, err=" + (String)(int)res);
+
+  // BLE scanning is active too, so a node blasts scan requests at its
+  // neighbours unless this tracks the WiFi setting. Separate radio, so it is
+  // worth applying even when the call above failed.
+  if (this->ble_initialized)
+    NimBLEDevice::setPower(dbm);
+
+  if (res == ESP_OK)
+    Logger::log(STD_MSG, "TX power set to " + (String)(int)dbm + " dBm");
+}
+
+void WiFiOps::loadTxPowerSetting() {
+  int stored = settings.loadSetting<int>(TX_POWER_NAME);
+
+  // Settings files written before this key existed auto-create it with a
+  // value of 1, which is below the radio floor. Treat anything out of range
+  // as unconfigured and fall back to the default.
+  if ((stored < MIN_TX_POWER_DBM) || (stored > MAX_TX_POWER_DBM))
+    stored = DEFAULT_TX_POWER_DBM;
+
+  this->tx_power_dbm = (int8_t)stored;
+
+  Logger::log(STD_MSG, "Wardrive TX power: " +
+              (String)(int)this->tx_power_dbm + " dBm");
 }
 
 void WiFiOps::deinitWiFi() {
@@ -1965,10 +2029,12 @@ void WiFiOps::initBLE() {
   pBLEScan->setDuplicateFilter(false);       // Disables internal filtering based on MAC
   pBLEScan->setMaxResults(0);                // Prevent storing results in NimBLEScanResults
   ble_initialized = true;
+
+  // NimBLE resets to its own default on init, so match the WiFi baseline.
+  NimBLEDevice::setPower(this->tx_power_dbm);
 }
 
 bool WiFiOps::tryConnectToWiFi(unsigned long timeoutMs) {
-
   display.clearScreen();
   display.tft->setCursor(0, 0);
   display.tft->setTextColor(ST77XX_WHITE, ST77XX_BLACK);
@@ -1994,6 +2060,10 @@ bool WiFiOps::tryConnectToWiFi(unsigned long timeoutMs) {
   // Connect to WiFi with AP credentials
   WiFi.mode(WIFI_STA);
   WiFi.begin(this->user_ap_ssid.c_str(), this->user_ap_password.c_str());
+
+  // Associating needs range to a real AP, not to a node 2m away. Has to come
+  // after mode/begin, which restart the radio and drop it back to the default.
+  this->setTxPower(WEB_TX_POWER_DBM);
 
   // Wait while we connect
   unsigned long start = millis();
@@ -2027,6 +2097,10 @@ void WiFiOps::startAccessPoint() {
   display.tft->print("Starting AP: ");
   display.tft->println(this->apSSID);
   WiFi.softAP(this->apSSID, this->apPassword);
+
+  // A config page nobody can reach from across the room is no use. softAP()
+  // restarts the radio, so this has to follow it rather than precede it.
+  this->setTxPower(WEB_TX_POWER_DBM);
   Logger::log(GUD_MSG, "Access Point started");
   Logger::log(GUD_MSG, "IP: ");
   Logger::log(GUD_MSG, WiFi.softAPIP().toString());
@@ -2587,6 +2661,23 @@ void WiFiOps::serveConfigPage() {
     if (cur_enc) html += " checked";
     html += "><br><br>";
 
+    // ---- TX Power ----
+    html += "<h3>TX Power</h3>";
+    html += "<small>Maximum transmit power while wardriving. Lower values cut the ";
+    html += "desense between nodes sitting close together, at the cost of scan range ";
+    html += "and mesh range. Web UI, dock mode and uploads always run at full power. ";
+    html += "The radio only implements the steps listed here.</small><br><br>";
+    html += "Max TX Power: <select name=\"tx_dbm\">";
+    static const int8_t tx_power_rungs[] = {2, 5, 7, 8, 11, 13, 14, 15, 16, 18, 20};
+    for (uint8_t i = 0; i < sizeof(tx_power_rungs) / sizeof(tx_power_rungs[0]); i++) {
+      html += "<option value=\"" + String((int)tx_power_rungs[i]) + "\"";
+      if (this->tx_power_dbm == tx_power_rungs[i]) html += " selected";
+      html += ">" + String((int)tx_power_rungs[i]) + " dBm";
+      if (tx_power_rungs[i] == DEFAULT_TX_POWER_DBM) html += " (default)";
+      html += "</option>";
+    }
+    html += "</select><br><br>";
+
     html += "<input type=\"submit\" value=\"Save Settings\">";
     html += "</form>";
 
@@ -2803,6 +2894,18 @@ void WiFiOps::serveConfigPage() {
     if (server.hasArg("use_encryption")) {
       this->use_encryption = (server.arg("use_encryption") == "true");
       settings.saveSetting<bool>("e", this->use_encryption);
+      anyChange = true;
+    }
+
+    // TX power. Only the baseline moves here - we are serving the web UI at
+    // full power right now, and initWiFi() applies the new value on the way
+    // back to wardriving.
+    if (server.hasArg("tx_dbm") && server.arg("tx_dbm") != "") {
+      int requested = server.arg("tx_dbm").toInt();
+      if (requested < MIN_TX_POWER_DBM) requested = MIN_TX_POWER_DBM;
+      if (requested > MAX_TX_POWER_DBM) requested = MAX_TX_POWER_DBM;
+      this->tx_power_dbm = (int8_t)requested;
+      settings.saveSetting<bool>(TX_POWER_NAME, (int)this->tx_power_dbm, true);
       anyChange = true;
     }
 
@@ -3064,6 +3167,7 @@ bool WiFiOps::begin(bool skip_admin) {
 
   //this->run_mode = settings.loadSetting<int>("m");
   this->use_encryption = settings.loadSetting<bool>("e");
+  this->loadTxPowerSetting();
 
   Logger::log(STD_MSG, "ENOW Key: " + this->esp_now_key);
 
@@ -3197,6 +3301,9 @@ void WiFiOps::handleDockConnecting() {
 
   WiFi.mode(WIFI_STA);
   WiFi.begin(trigSSID.c_str(), trigPass.c_str());
+
+  // Reaching the dock AP needs full power, applied after mode/begin.
+  this->setTxPower(WEB_TX_POWER_DBM);
 
   unsigned long start = millis();
   while (WiFi.status() != WL_CONNECTED &&

@@ -558,6 +558,13 @@ bool Settings::createDefaultSettings(fs::FS &fs, bool spec, uint8_t index, Strin
     jsonBuffer["Settings"][28]["range"]["min"] = false;
     jsonBuffer["Settings"][28]["range"]["max"] = true;
 
+    // [29] Wardriving max TX power in dBm
+    jsonBuffer["Settings"][29]["name"] = TX_POWER_NAME;
+    jsonBuffer["Settings"][29]["type"] = "Int";
+    jsonBuffer["Settings"][29]["value"] = DEFAULT_TX_POWER_DBM;
+    jsonBuffer["Settings"][29]["range"]["min"] = MIN_TX_POWER_DBM;
+    jsonBuffer["Settings"][29]["range"]["max"] = MAX_TX_POWER_DBM;
+
     if (serializeJson(jsonBuffer, settings_string) == 0) {
       Logger::log(WARN_MSG, "Failed to write to string");
     }

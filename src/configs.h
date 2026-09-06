@@ -52,6 +52,15 @@
 #define ENOW_KEY_MAX_LEN 32
 #define ENOW_TEXT_MAX    200
 
+//// Radio power stuff
+// Nodes parked close together desense each other while scanning, so the
+// wardriving power is turned down and only raised for AP work.
+#define TX_POWER_NAME        "tx_dbm" // Wardriving max TX power in dBm (Int)
+#define DEFAULT_TX_POWER_DBM 2        // Bottom rung the radio implements
+#define WEB_TX_POWER_DBM     20       // Full power for web UI, dock and uploads
+#define MIN_TX_POWER_DBM     2
+#define MAX_TX_POWER_DBM     20
+
 //// BLE stuff
 #define BLE_SCAN_DURATION   1 * 500 // 0.5 second
 
@@ -170,7 +179,11 @@
 #define STANDBY_SCAN_INTERVAL  30 * 1000   // scan for K1T every 30s while in standby (no GPS)
 
 //// Settings JSON buffer — bumped from 2048 to handle 30 settings entries
-#define SETTINGS_JSON_SIZE     4096
+// Measured at ~5.9KB of ArduinoJson slots on a 64-bit host; the 32-bit target
+// needs roughly half that, so 4096 still fit but with little to spare. Raised
+// when tx_dbm was added so the document is not one setting away from silently
+// truncating.
+#define SETTINGS_JSON_SIZE     6144
 
 // ============================================================
 // Chunk 6: Dock mode state constants

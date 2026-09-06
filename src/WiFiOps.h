@@ -10,6 +10,7 @@
 #include "display.h"
 #include "BatteryInterface.h"
 #include "SDInterface.h"
+#include "RadioTuning.h"
 
 #include <esp_now.h>
 #include <WiFi.h>
@@ -55,6 +56,7 @@ struct GeofenceEntry {
 #define MAX_NODES 24
 #define NODE_TIMEOUT_MS 60000
 #define ADMIN_WAIT_MS 300
+#define NODE_STAGGER_WINDOW_MS 120
 #define DEBUG_OUTPUT_DELAY 30000
 
 #define NODE_FLAG_ACTIVE       0x01
@@ -213,6 +215,16 @@ class WiFiOps
 
     uint8_t current_assignment_version = 1;
     uint8_t current_assigned_scan_idx = 0;
+
+    // --------------------------------------------------------
+    // TX power. tx_power_dbm is the baseline initWiFi() re-asserts
+    // every time the radio comes back up; the AP paths raise the
+    // applied power afterwards without disturbing the baseline.
+    // Starts at full so the boot admin phase is never crippled.
+    // --------------------------------------------------------
+    int8_t tx_power_dbm = WEB_TX_POWER_DBM;
+    void setTxPower(int8_t dbm);
+    void loadTxPowerSetting();
 
     String esp_now_key = "";
 
