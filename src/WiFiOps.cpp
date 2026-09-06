@@ -1340,6 +1340,11 @@ uint32_t WiFiOps::getCurrentBLECount() {
 }
 
 void WiFiOps::scanBLE() {
+  // Safe to call on a device with BLE turned off, so the guard does not have
+  // to live at every call site.
+  if (pBLEScan == nullptr)
+    return;
+
   //Logger::log(STD_MSG, "Starting BLE scan...");
   pBLEScan->clearResults();
   pBLEScan->start(BLE_SCAN_DURATION, false, false);
@@ -1429,19 +1434,20 @@ int WiFiOps::runWardrive(uint32_t currentTime) {
         // Delete the scan data
         WiFi.scanDelete();
 
-        // Scan BLE here
+        // Scan BLE here, unless this device has BLE turned off entirely
         const bool solo_ble_due =
           (this->run_mode == SOLO_MODE) &&
           (millis() - solo_last_ble_scan_ms >= SOLO_BLE_INTERVAL_MS);
-        if (solo_ble_due ||
-            ((this->run_mode == NODE_MODE) &&
-             (current_assigned_scan_idx == assigned_start_idx))) {
+        if ((pBLEScan != nullptr) &&
+            (solo_ble_due ||
+             ((this->run_mode == NODE_MODE) &&
+              (current_assigned_scan_idx == assigned_start_idx)))) {
           this->scanBLE();
           if (solo_ble_due)
             solo_last_ble_scan_ms = millis();
         }
 
-        while(pBLEScan->isScanning())
+        while ((pBLEScan != nullptr) && pBLEScan->isScanning())
           delay(1);
 
         if ((this->run_mode == NODE_MODE) && (current_assigned_scan_idx == assigned_start_idx))
@@ -2020,6 +2026,13 @@ void WiFiOps::deinitBLE() {
 }
 
 void WiFiOps::initBLE() {
+  if (!this->ble_enabled) {
+    Logger::log(STD_MSG, "BLE scanning disabled for this device; skipping NimBLE");
+    pBLEScan = nullptr;
+    ble_initialized = false;
+    return;
+  }
+
   NimBLEDevice::init("");
   //delete pBLEScan;
   pBLEScan = NimBLEDevice::getScan();
@@ -2661,6 +2674,16 @@ void WiFiOps::serveConfigPage() {
     if (cur_enc) html += " checked";
     html += "><br><br>";
 
+    // ---- BLE ----
+    html += "<h3>BLE Scanning</h3>";
+    html += "<small>Turn off on nodes that do not need to collect BLE. Skips ";
+    html += "NimBLE entirely, freeing its memory and taking BLE out of the ";
+    html += "2.4GHz radio coexistence, which leaves more airtime for the WiFi ";
+    html += "scan. Takes effect on reboot.</small><br><br>";
+    html += "BLE Scanning: <input type=\"checkbox\" name=\"ble_en\" value=\"true\"";
+    if (this->ble_enabled) html += " checked";
+    html += "><br><br>";
+
     // ---- TX Power ----
     html += "<h3>TX Power</h3>";
     html += "<small>Maximum transmit power while wardriving. Lower values cut the ";
@@ -2916,6 +2939,14 @@ void WiFiOps::serveConfigPage() {
       settings.saveSetting<bool>(TX_POWER_NAME, (int)this->tx_power_setting, true);
       anyChange = true;
     }
+
+    // BLE scanning. The form field is positive, the stored key is negative.
+    bool bleEnabled = server.hasArg("ble_en") && server.arg("ble_en") == "true";
+    if (bleEnabled != this->ble_enabled) {
+      this->ble_enabled = bleEnabled;
+      anyChange = true;
+    }
+    settings.saveSetting<bool>(BLE_DISABLE_NAME, !bleEnabled);
 
     // Device mode is saved above, so re-resolve here to catch a role change
     // as well as a power change.
@@ -3181,6 +3212,11 @@ bool WiFiOps::begin(bool skip_admin) {
   //this->run_mode = settings.loadSetting<int>("m");
   this->use_encryption = settings.loadSetting<bool>("e");
   this->loadTxPowerSetting();
+
+  // Stored as the negative; see BLE_DISABLE_NAME.
+  this->ble_enabled = !settings.loadSetting<bool>(BLE_DISABLE_NAME);
+  Logger::log(STD_MSG, this->ble_enabled ? "BLE scanning: enabled"
+                                         : "BLE scanning: disabled");
 
   Logger::log(STD_MSG, "ENOW Key: " + this->esp_now_key);
 

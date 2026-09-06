@@ -57,6 +57,12 @@
 // wardriving power is turned down and only raised for AP work.
 #define TX_POWER_NAME        "tx_dbm" // Wardriving max TX power in dBm (Int)
 #define TX_POWER_AUTO        0        // Stored value meaning "default for my role"
+
+//// BLE scanning toggle
+// Stored as the negative: loadSetting<bool> auto-creates a missing key as
+// false, so "off" being the false value keeps BLE on for devices upgrading
+// from a settings file that predates this key.
+#define BLE_DISABLE_NAME     "ble_off" // true = skip NimBLE entirely (bool)
 #define DEFAULT_TX_POWER_DBM 2        // Bottom rung the radio implements
 #define WEB_TX_POWER_DBM     20       // Full power for web UI, dock and uploads
 #define MIN_TX_POWER_DBM     2

@@ -103,7 +103,9 @@ struct NodeRecord {
 class WiFiOps
 {
   private:
-    NimBLEScan* pBLEScan;
+    // Null until initBLE() runs, which is now conditional - every dereference
+    // must tolerate BLE having been skipped for this device.
+    NimBLEScan* pBLEScan = nullptr;
     bool ble_initialized = false;
 
     wifi_country_t country = {
@@ -226,6 +228,10 @@ class WiFiOps
     // Raw stored setting, kept separate so the web UI can show "Auto" rather
     // than whatever the role happened to resolve it to.
     int8_t tx_power_setting = TX_POWER_AUTO;
+
+    // Skipping NimBLE frees its heap and takes BLE out of the 2.4GHz radio
+    // coexistence, so a mesh can leave one node scanning and turn the rest off.
+    bool ble_enabled = true;
     void setTxPower(int8_t dbm);
     void loadTxPowerSetting();
 

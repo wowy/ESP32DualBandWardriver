@@ -565,6 +565,13 @@ bool Settings::createDefaultSettings(fs::FS &fs, bool spec, uint8_t index, Strin
     jsonBuffer["Settings"][29]["range"]["min"] = TX_POWER_AUTO;
     jsonBuffer["Settings"][29]["range"]["max"] = MAX_TX_POWER_DBM;
 
+    // [30] BLE scanning disabled (default: false, i.e. BLE on)
+    jsonBuffer["Settings"][30]["name"] = BLE_DISABLE_NAME;
+    jsonBuffer["Settings"][30]["type"] = "bool";
+    jsonBuffer["Settings"][30]["value"] = false;
+    jsonBuffer["Settings"][30]["range"]["min"] = false;
+    jsonBuffer["Settings"][30]["range"]["max"] = true;
+
     if (serializeJson(jsonBuffer, settings_string) == 0) {
       Logger::log(WARN_MSG, "Failed to write to string");
     }
