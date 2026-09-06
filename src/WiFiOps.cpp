@@ -584,6 +584,12 @@ void WiFiOps::debugPrintNodeTable() {
 }
 
 void WiFiOps::setFixedChannel(uint8_t ch) {
+  // Disable power save (prevents weird timing/channel behavior). Stays above
+  // the early return below: WiFi.STA.begin() re-applies the Arduino default
+  // (core 3.3.0, STA.cpp:114), so skipping this would leave modem sleep on for
+  // any node whose scan range already had it parked on the ESP-NOW channel.
+  esp_wifi_set_ps(WIFI_PS_NONE);
+
   // Every discovered network triggers a send, and each send calls in here.
   // Inside a burst we are already parked on the ESP-NOW channel, so bail out
   // rather than re-running the promiscuous toggle and the serial print for
@@ -594,9 +600,6 @@ void WiFiOps::setFixedChannel(uint8_t ch) {
       (parked_primary == ch)) {
     return;
   }
-
-  // Disable power save (prevents weird timing/channel behavior)
-  esp_wifi_set_ps(WIFI_PS_NONE);
 
   esp_wifi_set_promiscuous(true);
 
@@ -2576,6 +2579,12 @@ void WiFiOps::serveConfigPage() {
     bool   cur_dbg_en      = settings.loadSetting<bool>(DEBUG_LOG_NAME);
     int    cur_mode        = settings.loadSetting<int>("m");
     bool   cur_enc         = settings.loadSetting<bool>("e");
+    // Read these from storage rather than from the members: begin() serves
+    // this page during the boot admin phase, before it loads either of them.
+    bool   cur_ble_en      = !settings.loadSetting<bool>(BLE_DISABLE_NAME);
+    int    cur_tx_setting  = settings.loadSetting<int>(TX_POWER_NAME);
+    if ((cur_tx_setting < MIN_TX_POWER_DBM) || (cur_tx_setting > MAX_TX_POWER_DBM))
+      cur_tx_setting = TX_POWER_AUTO;
 
     String html = "<html><body>";
     html += "<h2>JCMK C5 Wardriver &mdash; Configuration</h2>";
@@ -2681,7 +2690,7 @@ void WiFiOps::serveConfigPage() {
     html += "2.4GHz radio coexistence, which leaves more airtime for the WiFi ";
     html += "scan. Takes effect on reboot.</small><br><br>";
     html += "BLE Scanning: <input type=\"checkbox\" name=\"ble_en\" value=\"true\"";
-    if (this->ble_enabled) html += " checked";
+    if (cur_ble_en) html += " checked";
     html += "><br><br>";
 
     // ---- TX Power ----
@@ -2693,16 +2702,16 @@ void WiFiOps::serveConfigPage() {
     html += "dock mode and uploads always run at full power. The radio only ";
     html += "implements the steps listed here.</small><br><br>";
     html += "Max TX Power: <select name=\"tx_dbm\">";
-    const bool tx_is_solo = (this->run_mode == SOLO_MODE);
+    const bool tx_is_solo = (cur_mode == SOLO_MODE);
     html += "<option value=\"" + String((int)TX_POWER_AUTO) + "\"";
-    if (this->tx_power_setting == TX_POWER_AUTO) html += " selected";
+    if (cur_tx_setting == TX_POWER_AUTO) html += " selected";
     html += ">Auto &mdash; " +
             String((int)resolveTxPowerDbm(TX_POWER_AUTO, tx_is_solo)) +
             " dBm for this role</option>";
     static const int8_t tx_power_rungs[] = {2, 5, 7, 8, 11, 13, 14, 15, 16, 18, 20};
     for (uint8_t i = 0; i < sizeof(tx_power_rungs) / sizeof(tx_power_rungs[0]); i++) {
       html += "<option value=\"" + String((int)tx_power_rungs[i]) + "\"";
-      if (this->tx_power_setting == tx_power_rungs[i]) html += " selected";
+      if (cur_tx_setting == tx_power_rungs[i]) html += " selected";
       html += ">" + String((int)tx_power_rungs[i]) + " dBm</option>";
     }
     html += "</select><br><br>";
@@ -2941,12 +2950,15 @@ void WiFiOps::serveConfigPage() {
     }
 
     // BLE scanning. The form field is positive, the stored key is negative.
+    // Compare against storage rather than the member, which begin() has not
+    // populated yet when this runs during the boot admin phase.
     bool bleEnabled = server.hasArg("ble_en") && server.arg("ble_en") == "true";
-    if (bleEnabled != this->ble_enabled) {
-      this->ble_enabled = bleEnabled;
+    const bool bleStored = !settings.loadSetting<bool>(BLE_DISABLE_NAME);
+    if (bleEnabled != bleStored) {
+      settings.saveSetting<bool>(BLE_DISABLE_NAME, !bleEnabled);
       anyChange = true;
     }
-    settings.saveSetting<bool>(BLE_DISABLE_NAME, !bleEnabled);
+    this->ble_enabled = bleEnabled;
 
     // Device mode is saved above, so re-resolve here to catch a role change
     // as well as a power change.
