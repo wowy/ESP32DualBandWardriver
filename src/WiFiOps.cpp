@@ -3148,6 +3148,21 @@ bool WiFiOps::begin(bool skip_admin) {
 
   this->run_mode = settings.loadSetting<int>("m");
 
+  // Seed ble_off before anything can read it - the config page is served
+  // further down and its GET handler would otherwise be the first reader.
+  //
+  // The settings layer cannot round-trip a missing bool: loadSetting<bool>
+  // returns true for a key it had to create while writing false, and
+  // saveSetting<bool> discards the value it was given when it has to create
+  // the key, storing false regardless. So a missing key reads back as "BLE
+  // disabled" once, and the first attempt to disable BLE would not stick.
+  // Creating it up front with the default we want - false, meaning BLE on -
+  // sidesteps both, and is why this setting is stored as the negative.
+  if (settings.getSettingType(BLE_DISABLE_NAME) == "") {
+    Logger::log(STD_MSG, "No BLE setting found; defaulting to enabled");
+    settings.saveSetting<bool>(BLE_DISABLE_NAME, false);
+  }
+
   if (!skip_admin) {
     // Init WiFi
     this->initWiFi();
